@@ -1,0 +1,1117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>T-100 Load Factor Explorer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0e17;
+    --surface:   #111827;
+    --surface2:  #1a2335;
+    --border:    #1f2d45;
+    --accent:    #00d4ff;
+    --accent2:   #ff6b35;
+    --text:      #e8edf5;
+    --muted:     #6b7e99;
+    --success:   #22c55e;
+    --mono:      'DM Mono', monospace;
+    --sans:      'Syne', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 48px 48px;
+    opacity: 0.3;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  #app { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 0 20px 60px; }
+
+  /* Header */
+  header {
+    padding: 40px 0 32px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 36px;
+  }
+  .header-eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  header h1 {
+    font-size: clamp(26px, 5vw, 42px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    color: var(--text);
+  }
+  header h1 span { color: var(--accent); }
+  .header-sub {
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  /* Loading overlay */
+  #loading {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    gap: 16px;
+  }
+  #loading.hidden { display: none; }
+  .spinner {
+    width: 36px; height: 36px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+  /* Search panel */
+  .search-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    margin-bottom: 28px;
+  }
+  .search-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto;
+    gap: 16px;
+    align-items: end;
+  }
+  @media (max-width: 700px) {
+    .search-grid { grid-template-columns: 1fr 1fr; }
+    .search-grid .btn-search { grid-column: span 2; }
+  }
+  @media (max-width: 440px) {
+    .search-grid { grid-template-columns: 1fr; }
+    .search-grid .btn-search { grid-column: span 1; }
+  }
+
+  .field-group { display: flex; flex-direction: column; gap: 6px; }
+  .field-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* Autocomplete wrapper */
+  .autocomplete { position: relative; }
+  .autocomplete input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .autocomplete input:focus { border-color: var(--accent); }
+  .autocomplete input::placeholder { color: var(--muted); }
+
+  .dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0; right: 0;
+    background: var(--surface2);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+    z-index: 50;
+    display: none;
+  }
+  .dropdown.open { display: block; }
+  .dropdown-item {
+    padding: 9px 14px;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+  .dropdown-item:last-child { border-bottom: none; }
+  .dropdown-item:hover, .dropdown-item.active { background: var(--border); }
+  .dropdown-item .code { color: var(--accent); margin-right: 8px; }
+  .dropdown-item .name { color: var(--muted); font-size: 11px; }
+
+  /* Month range */
+  .month-range-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 16px;
+  }
+  select {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text);
+    outline: none;
+    appearance: none;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  select:focus { border-color: var(--accent); }
+
+  /* Search button */
+  .btn-search {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 8px;
+    padding: 11px 24px;
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s, transform 0.1s;
+  }
+  .btn-search:hover { opacity: 0.88; transform: translateY(-1px); }
+  .btn-search:active { transform: translateY(0); }
+  .btn-search:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  /* Toggle: both directions */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .toggle-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .toggle {
+    width: 36px; height: 20px;
+    background: var(--border);
+    border-radius: 10px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .toggle.on { background: var(--accent); }
+  .toggle::after {
+    content: '';
+    position: absolute;
+    top: 3px; left: 3px;
+    width: 14px; height: 14px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .toggle.on::after { transform: translateX(16px); }
+
+  /* Error / info banners */
+  .banner {
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+    margin-bottom: 20px;
+    display: none;
+  }
+  .banner.visible { display: block; }
+  .banner.error { background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); color: #f87171; }
+  .banner.info  { background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.2); color: var(--accent); }
+
+  /* Results area */
+  #results { display: none; }
+  #results.visible { display: block; }
+
+  .results-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .results-title {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .results-meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* Chart */
+  .chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+  .chart-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+  .chart-wrap { position: relative; height: 260px; }
+
+  /* Monthly detail toggle */
+  .detail-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .btn-detail {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .btn-detail:hover, .btn-detail.active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .detail-loading {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    display: none;
+  }
+  .detail-loading.visible { display: inline; }
+
+  /* Table */
+  .table-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead tr { background: var(--surface2); }
+  th {
+    padding: 12px 16px;
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+  th:hover { color: var(--accent); }
+  th.sort-asc::after  { content: ' ↑'; color: var(--accent); }
+  th.sort-desc::after { content: ' ↓'; color: var(--accent); }
+  td {
+    padding: 11px 16px;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .lf-cell { font-weight: 500; }
+  .lf-high  { color: var(--success); }
+  .lf-mid   { color: var(--accent); }
+  .lf-low   { color: var(--accent2); }
+
+  /* LF bar inside cell */
+  .lf-bar-wrap { display: flex; align-items: center; gap: 8px; }
+  .lf-bar {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    width: 60px;
+    flex-shrink: 0;
+  }
+  .lf-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s;
+  }
+
+  .no-results {
+    padding: 40px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  /* Footer */
+  footer {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--surface); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <div class="loading-text">Loading T-100 data...</div>
+</div>
+
+<div id="app">
+  <header>
+    <div class="header-eyebrow">BTS T-100 Segment · All Carriers</div>
+    <h1>Load Factor <span>Explorer</span></h1>
+    <div class="header-sub">RPMs / ASMs &nbsp;·&nbsp; Routes to, from &amp; within the United States</div>
+  </header>
+
+  <!-- Search panel -->
+  <div class="search-panel">
+    <div class="search-grid">
+
+      <div class="field-group">
+        <div class="field-label">Origin Airport</div>
+        <div class="autocomplete" id="ac-origin">
+          <input type="text" id="origin-input" placeholder="IATA code or city…" autocomplete="off">
+          <div class="dropdown" id="origin-dropdown"></div>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Destination Airport</div>
+        <div class="autocomplete" id="ac-dest">
+          <input type="text" id="dest-input" placeholder="IATA code or city…" autocomplete="off">
+          <div class="dropdown" id="dest-dropdown"></div>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Airline (optional)</div>
+        <div class="autocomplete" id="ac-carrier">
+          <input type="text" id="carrier-input" placeholder="Code or name…" autocomplete="off">
+          <div class="dropdown" id="carrier-dropdown"></div>
+        </div>
+      </div>
+
+      <button class="btn-search" id="btn-search" onclick="runSearch()">Search</button>
+    </div>
+
+    <!-- Month range -->
+    <div class="month-range-row">
+      <div class="field-group">
+        <div class="field-label">From Month</div>
+        <select id="month-from"></select>
+      </div>
+      <div class="field-group">
+        <div class="field-label">To Month</div>
+        <select id="month-to"></select>
+      </div>
+    </div>
+
+    <!-- Direction toggle -->
+    <div class="toggle-row">
+      <div class="toggle on" id="dir-toggle" onclick="toggleDirection()"></div>
+      <label class="toggle-label" onclick="toggleDirection()">Include both directions (O→D and D→O)</label>
+    </div>
+  </div>
+
+  <div class="banner error" id="error-banner"></div>
+  <div class="banner info"  id="info-banner"></div>
+
+  <!-- Results -->
+  <div id="results">
+    <div class="results-header">
+      <div class="results-title" id="results-title"></div>
+      <div class="results-meta" id="results-meta"></div>
+    </div>
+
+    <!-- Chart -->
+    <div class="chart-card" id="chart-card">
+      <div class="chart-title">Load Factor Trend — RPMs / ASMs</div>
+      <div class="chart-wrap"><canvas id="lf-chart"></canvas></div>
+    </div>
+
+    <!-- Monthly detail toggle -->
+    <div class="detail-toggle-row">
+      <button class="btn-detail active" id="btn-summary" onclick="switchView('summary')">Summary</button>
+      <button class="btn-detail" id="btn-monthly" onclick="switchView('monthly')">Monthly Detail</button>
+      <span class="detail-loading" id="detail-loading">⟳ Loading detail data…</span>
+    </div>
+
+    <div class="table-card">
+      <div class="table-scroll">
+        <table id="results-table">
+          <thead id="table-head"></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <span>Source: BTS TranStats T-100 Segment (All Carriers)</span>
+    <span id="footer-generated"></span>
+  </footer>
+</div>
+
+<script>
+// ─── CONFIG ────────────────────────────────────────────────────────────────────
+// Update these paths to point to your JSON files on GitHub raw or same directory.
+const SUMMARY_URL = 'load_factors_summary.json';
+const DETAIL_URL  = 'load_factors_detail.json';
+
+// ─── STATE ─────────────────────────────────────────────────────────────────────
+let airports = [], carriers = [], months = [];
+let summaryData = [], detailData = null;
+let detailLoaded = false;
+
+let selectedOrigin  = null;
+let selectedDest    = null;
+let selectedCarrier = null;
+let bothDirections  = true;
+let currentView     = 'summary';
+let sortCol         = null, sortDir = 1;
+let chartInstance   = null;
+
+const MONTH_NAMES = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// ─── INIT ───────────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    const res = await fetch(SUMMARY_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    airports    = data.airports    || [];
+    carriers    = data.carriers    || [];
+    months      = data.months      || [];
+    summaryData = data.summary     || [];
+
+    if (data.meta?.generated) {
+      document.getElementById('footer-generated').textContent =
+        'Data generated: ' + data.meta.generated;
+    }
+
+    populateMonthSelects();
+    document.getElementById('loading').classList.add('hidden');
+  } catch (e) {
+    document.getElementById('loading').innerHTML =
+      `<div style="font-family:var(--mono);color:#f87171;font-size:13px;padding:20px;text-align:center">
+        Failed to load data.<br><br>
+        Make sure <code>load_factors_summary.json</code> is in the same folder as this HTML file.<br><br>
+        <small>${e.message}</small>
+      </div>`;
+  }
+}
+
+// ─── MONTH SELECTS ─────────────────────────────────────────────────────────────
+function populateMonthSelects() {
+  const from = document.getElementById('month-from');
+  const to   = document.getElementById('month-to');
+  months.forEach(m => {
+    const label = `${MONTH_NAMES[m.month]} ${m.year}`;
+    const val   = `${m.year}-${String(m.month).padStart(2,'0')}`;
+    from.innerHTML += `<option value="${val}">${label}</option>`;
+    to.innerHTML   += `<option value="${val}">${label}</option>`;
+  });
+  // Default: full range
+  to.selectedIndex = to.options.length - 1;
+}
+
+function parseMonthVal(val) {
+  const [y, m] = val.split('-');
+  return { year: parseInt(y), month: parseInt(m) };
+}
+
+// ─── AUTOCOMPLETE ──────────────────────────────────────────────────────────────
+function makeAC(inputId, dropdownId, dataFn, onSelect) {
+  const input = document.getElementById(inputId);
+  const dd    = document.getElementById(dropdownId);
+  let activeIdx = -1;
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    if (!q) { dd.classList.remove('open'); dd.innerHTML = ''; selectedOrigin = null; return; }
+    const results = dataFn(q).slice(0, 40);
+    if (!results.length) { dd.classList.remove('open'); return; }
+    activeIdx = -1;
+    dd.innerHTML = results.map((r, i) =>
+      `<div class="dropdown-item" data-idx="${i}"
+        onmousedown="event.preventDefault()"
+        onclick="selectItem_${inputId}(${i})">
+        <span class="code">${r.code}</span>
+        <span class="name">${r.label}</span>
+      </div>`
+    ).join('');
+    dd._results = results;
+    dd.classList.add('open');
+  });
+
+  input.addEventListener('keydown', e => {
+    const items = dd.querySelectorAll('.dropdown-item');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      activeIdx = Math.min(activeIdx + 1, items.length - 1);
+      items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeIdx = Math.max(activeIdx - 1, 0);
+      items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+    } else if (e.key === 'Enter') {
+      if (activeIdx >= 0 && dd._results) selectFn(dd._results[activeIdx]);
+    } else if (e.key === 'Escape') {
+      dd.classList.remove('open');
+    }
+  });
+
+  input.addEventListener('blur', () => setTimeout(() => dd.classList.remove('open'), 150));
+
+  function selectFn(r) {
+    input.value = r.display;
+    dd.classList.remove('open');
+    onSelect(r);
+  }
+
+  // expose per-input select for onclick
+  window[`selectItem_${inputId}`] = (idx) => {
+    selectFn(dd._results[idx]);
+  };
+}
+
+// Airport search
+function searchAirports(q) {
+  const uq = q.toUpperCase();
+  return airports
+    .filter(a =>
+      a.iata.includes(uq) ||
+      (a.city || '').toUpperCase().includes(uq)
+    )
+    .map(a => ({
+      code: a.iata,
+      label: a.city || '',
+      display: `${a.iata} — ${a.city || ''}`,
+      raw: a
+    }));
+}
+
+// Carrier search
+function searchCarriers(q) {
+  const uq = q.toUpperCase();
+  return carriers
+    .filter(c =>
+      c.iata.toUpperCase().includes(uq) ||
+      (c.name || '').toUpperCase().includes(uq)
+    )
+    .map(c => ({
+      code: c.iata,
+      label: c.name || '',
+      display: `${c.iata} — ${c.name || ''}`,
+      raw: c
+    }));
+}
+
+makeAC('origin-input',  'origin-dropdown',  searchAirports, r => { selectedOrigin  = r.raw; });
+makeAC('dest-input',    'dest-dropdown',    searchAirports, r => { selectedDest    = r.raw; });
+makeAC('carrier-input', 'carrier-dropdown', searchCarriers, r => { selectedCarrier = r.raw; });
+
+// Clear selections if user edits field manually
+['origin-input','dest-input','carrier-input'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => {
+    if (id === 'origin-input')  selectedOrigin  = null;
+    if (id === 'dest-input')    selectedDest    = null;
+    if (id === 'carrier-input') selectedCarrier = null;
+  });
+});
+
+// ─── DIRECTION TOGGLE ──────────────────────────────────────────────────────────
+function toggleDirection() {
+  bothDirections = !bothDirections;
+  document.getElementById('dir-toggle').classList.toggle('on', bothDirections);
+}
+
+// ─── SEARCH ────────────────────────────────────────────────────────────────────
+function runSearch() {
+  hideError(); hideInfo();
+
+  // Validate: need at least one airport
+  if (!selectedOrigin && !selectedDest) {
+    // Try fuzzy: if input has text but no selection, attempt match
+    const oi = document.getElementById('origin-input').value.trim();
+    const di = document.getElementById('dest-input').value.trim();
+    if (!oi && !di) { showError('Enter at least one airport (origin or destination).'); return; }
+    if (oi && !selectedOrigin) { showError('Select a valid origin airport from the dropdown.'); return; }
+    if (di && !selectedDest)   { showError('Select a valid destination airport from the dropdown.'); return; }
+  }
+
+  // Carrier: if text entered but no selection
+  const ci = document.getElementById('carrier-input').value.trim();
+  if (ci && !selectedCarrier) { showError('Select a valid airline from the dropdown, or clear the airline field.'); return; }
+
+  const fromVal = parseMonthVal(document.getElementById('month-from').value);
+  const toVal   = parseMonthVal(document.getElementById('month-to').value);
+
+  if (fromVal.year * 12 + fromVal.month > toVal.year * 12 + toVal.month) {
+    showError('"From" month must be before "To" month.'); return;
+  }
+
+  // Filter summary data
+  let rows = summaryData.filter(r => {
+    // Month filter (summary has no month — skip, handled in detail)
+    // Route filter
+    const fwdMatch = (!selectedOrigin || r.origin === selectedOrigin.iata) &&
+                     (!selectedDest   || r.dest   === selectedDest.iata);
+    const revMatch = bothDirections &&
+                     (!selectedOrigin || r.dest   === selectedOrigin.iata) &&
+                     (!selectedDest   || r.origin === selectedDest.iata);
+    if (!fwdMatch && !revMatch) return false;
+
+    // Carrier filter
+    if (selectedCarrier && r.carrier !== selectedCarrier.iata) return false;
+
+    return true;
+  });
+
+  if (!rows.length) {
+    document.getElementById('results').classList.remove('visible');
+    showInfo('No data found for these filters. Try broadening your search.');
+    return;
+  }
+
+  sortCol = null;
+  currentView = 'summary';
+  document.getElementById('btn-summary').classList.add('active');
+  document.getElementById('btn-monthly').classList.remove('active');
+
+  renderResults(rows, fromVal, toVal);
+}
+
+// ─── RENDER ────────────────────────────────────────────────────────────────────
+function renderResults(rows, fromVal, toVal) {
+  const el = document.getElementById('results');
+  el.classList.add('visible');
+
+  // Title
+  const oLabel = selectedOrigin ? selectedOrigin.iata : '(any)';
+  const dLabel = selectedDest   ? selectedDest.iata   : '(any)';
+  const dir    = bothDirections ? '↔' : '→';
+  const cLabel = selectedCarrier ? ` · ${selectedCarrier.iata}` : '';
+  document.getElementById('results-title').textContent =
+    `${oLabel} ${dir} ${dLabel}${cLabel}`;
+  document.getElementById('results-meta').textContent =
+    `${rows.length} route${rows.length !== 1 ? 's' : ''} · ${MONTH_NAMES[fromVal.month]} ${fromVal.year} – ${MONTH_NAMES[toVal.month]} ${toVal.year}`;
+
+  renderSummaryTable(rows);
+  renderChart(rows);
+}
+
+function renderSummaryTable(rows) {
+  const cols = [
+    { key: 'carrier',      label: 'Carrier' },
+    { key: 'origin',       label: 'Origin' },
+    { key: 'dest',         label: 'Dest' },
+    { key: 'months',       label: 'Months' },
+    { key: 'departures',   label: 'Departures' },
+    { key: 'passengers',   label: 'Pax' },
+    { key: 'seats',        label: 'Seats' },
+    { key: 'rpms',         label: 'RPMs' },
+    { key: 'asms',         label: 'ASMs' },
+    { key: 'load_factor',  label: 'Load Factor' },
+  ];
+
+  document.getElementById('table-head').innerHTML =
+    '<tr>' + cols.map(c =>
+      `<th onclick="sortTable('${c.key}', this)" id="th-${c.key}">${c.label}</th>`
+    ).join('') + '</tr>';
+
+  renderTableBody(rows, cols);
+}
+
+function renderMonthlyTable(rows) {
+  const cols = [
+    { key: 'period',       label: 'Period' },
+    { key: 'carrier',      label: 'Carrier' },
+    { key: 'origin',       label: 'Origin' },
+    { key: 'dest',         label: 'Dest' },
+    { key: 'departures',   label: 'Departures' },
+    { key: 'passengers',   label: 'Pax' },
+    { key: 'seats',        label: 'Seats' },
+    { key: 'rpms',         label: 'RPMs' },
+    { key: 'asms',         label: 'ASMs' },
+    { key: 'load_factor',  label: 'Load Factor' },
+  ];
+
+  document.getElementById('table-head').innerHTML =
+    '<tr>' + cols.map(c =>
+      `<th onclick="sortTable('${c.key}', this)" id="th-${c.key}">${c.label}</th>`
+    ).join('') + '</tr>';
+
+  renderTableBody(rows, cols);
+}
+
+function renderTableBody(rows, cols) {
+  const tbody = document.getElementById('table-body');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="99" class="no-results">No results</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => {
+    return '<tr>' + cols.map(c => {
+      if (c.key === 'load_factor') return lfCell(r.load_factor);
+      if (c.key === 'rpms' || c.key === 'asms') return `<td>${fmtBig(r[c.key])}</td>`;
+      if (c.key === 'departures' || c.key === 'passengers' || c.key === 'seats')
+        return `<td>${fmtNum(r[c.key])}</td>`;
+      if (c.key === 'carrier')
+        return `<td><b>${r.carrier}</b> <span style="color:var(--muted);font-size:11px">${r.carrier_name||''}</span></td>`;
+      if (c.key === 'origin')
+        return `<td><b>${r.origin}</b> <span style="color:var(--muted);font-size:11px">${(r.origin_city||'').split(',')[0]}</span></td>`;
+      if (c.key === 'dest')
+        return `<td><b>${r.dest}</b> <span style="color:var(--muted);font-size:11px">${(r.dest_city||'').split(',')[0]}</span></td>`;
+      return `<td>${r[c.key] ?? '—'}</td>`;
+    }).join('') + '</tr>';
+  }).join('');
+}
+
+function lfCell(lf) {
+  if (lf == null) return '<td>—</td>';
+  const pct  = (lf * 100).toFixed(1) + '%';
+  const cls  = lf >= 0.85 ? 'lf-high' : lf >= 0.70 ? 'lf-mid' : 'lf-low';
+  const fill = Math.min(lf * 100, 100).toFixed(1);
+  const color = lf >= 0.85 ? 'var(--success)' : lf >= 0.70 ? 'var(--accent)' : 'var(--accent2)';
+  return `<td>
+    <div class="lf-bar-wrap">
+      <span class="lf-cell ${cls}">${pct}</span>
+      <div class="lf-bar"><div class="lf-bar-fill" style="width:${fill}%;background:${color}"></div></div>
+    </div>
+  </td>`;
+}
+
+// ─── CHART ─────────────────────────────────────────────────────────────────────
+function renderChart(summaryRows) {
+  // For the chart in summary view, group by carrier and show overall LF as a horizontal bar
+  const sorted = [...summaryRows].sort((a,b) => (b.load_factor||0) - (a.load_factor||0)).slice(0, 15);
+  const labels = sorted.map(r => `${r.carrier} ${r.origin}→${r.dest}`);
+  const values = sorted.map(r => r.load_factor ? +(r.load_factor * 100).toFixed(2) : 0);
+  const colors = values.map(v => v >= 85 ? '#22c55e' : v >= 70 ? '#00d4ff' : '#ff6b35');
+
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+
+  const ctx = document.getElementById('lf-chart').getContext('2d');
+  chartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Load Factor %',
+        data: values,
+        backgroundColor: colors,
+        borderRadius: 4,
+        barThickness: Math.max(8, Math.min(24, 300 / sorted.length))
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.parsed.x.toFixed(1)}%`
+          },
+          backgroundColor: '#1a2335',
+          borderColor: '#1f2d45',
+          borderWidth: 1,
+          titleColor: '#e8edf5',
+          bodyColor: '#e8edf5',
+          titleFont: { family: "'DM Mono', monospace", size: 11 },
+          bodyFont:  { family: "'DM Mono', monospace", size: 11 },
+        }
+      },
+      scales: {
+        x: {
+          min: 0, max: 100,
+          grid: { color: '#1f2d45' },
+          ticks: {
+            color: '#6b7e99',
+            font: { family: "'DM Mono', monospace", size: 10 },
+            callback: v => v + '%'
+          }
+        },
+        y: {
+          grid: { display: false },
+          ticks: {
+            color: '#6b7e99',
+            font: { family: "'DM Mono', monospace", size: 10 }
+          }
+        }
+      }
+    }
+  });
+}
+
+function renderTrendChart(detailRows) {
+  // Group by period, compute aggregate LF per period
+  const byPeriod = {};
+  detailRows.forEach(r => {
+    const key = `${r.year}-${String(r.month).padStart(2,'0')}`;
+    if (!byPeriod[key]) byPeriod[key] = { rpms: 0, asms: 0, label: `${MONTH_NAMES[r.month]} ${r.year}` };
+    byPeriod[key].rpms += r.rpms;
+    byPeriod[key].asms += r.asms;
+  });
+  const keys   = Object.keys(byPeriod).sort();
+  const labels = keys.map(k => byPeriod[k].label);
+  const values = keys.map(k => byPeriod[k].asms > 0
+    ? +((byPeriod[k].rpms / byPeriod[k].asms) * 100).toFixed(2) : 0);
+
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+
+  const ctx = document.getElementById('lf-chart').getContext('2d');
+  chartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Load Factor %',
+        data: values,
+        borderColor: '#00d4ff',
+        backgroundColor: 'rgba(0,212,255,0.08)',
+        borderWidth: 2,
+        pointBackgroundColor: '#00d4ff',
+        pointRadius: 4,
+        fill: true,
+        tension: 0.3
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: { label: ctx => ` ${ctx.parsed.y.toFixed(1)}%` },
+          backgroundColor: '#1a2335',
+          borderColor: '#1f2d45',
+          borderWidth: 1,
+          titleColor: '#e8edf5',
+          bodyColor: '#e8edf5',
+          titleFont: { family: "'DM Mono', monospace", size: 11 },
+          bodyFont:  { family: "'DM Mono', monospace", size: 11 },
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: '#1f2d45' },
+          ticks: { color: '#6b7e99', font: { family: "'DM Mono', monospace", size: 10 } }
+        },
+        y: {
+          min: 0, max: 100,
+          grid: { color: '#1f2d45' },
+          ticks: {
+            color: '#6b7e99',
+            font: { family: "'DM Mono', monospace", size: 10 },
+            callback: v => v + '%'
+          }
+        }
+      }
+    }
+  });
+}
+
+// ─── VIEW SWITCH (Summary / Monthly) ──────────────────────────────────────────
+async function switchView(view) {
+  if (view === currentView) return;
+  currentView = view;
+  document.getElementById('btn-summary').classList.toggle('active', view === 'summary');
+  document.getElementById('btn-monthly').classList.toggle('active', view === 'monthly');
+
+  if (view === 'summary') {
+    // Re-run summary from cached summary data
+    runSearch();
+    return;
+  }
+
+  // Monthly view — load detail file if not yet loaded
+  if (!detailLoaded) {
+    document.getElementById('detail-loading').classList.add('visible');
+    document.getElementById('btn-monthly').disabled = true;
+    try {
+      const res = await fetch(DETAIL_URL);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      detailData = data.detail || [];
+      detailLoaded = true;
+    } catch (e) {
+      showError('Could not load detail data: ' + e.message);
+      document.getElementById('detail-loading').classList.remove('visible');
+      document.getElementById('btn-monthly').disabled = false;
+      currentView = 'summary';
+      document.getElementById('btn-summary').classList.add('active');
+      document.getElementById('btn-monthly').classList.remove('active');
+      return;
+    }
+    document.getElementById('detail-loading').classList.remove('visible');
+    document.getElementById('btn-monthly').disabled = false;
+  }
+
+  const fromVal = parseMonthVal(document.getElementById('month-from').value);
+  const toVal   = parseMonthVal(document.getElementById('month-to').value);
+  const fromInt = fromVal.year * 12 + fromVal.month;
+  const toInt   = toVal.year  * 12 + toVal.month;
+
+  let rows = detailData.filter(r => {
+    const rInt = r.year * 12 + r.month;
+    if (rInt < fromInt || rInt > toInt) return false;
+
+    const fwdMatch = (!selectedOrigin || r.origin === selectedOrigin.iata) &&
+                     (!selectedDest   || r.dest   === selectedDest.iata);
+    const revMatch = bothDirections &&
+                     (!selectedOrigin || r.dest   === selectedOrigin.iata) &&
+                     (!selectedDest   || r.origin === selectedDest.iata);
+    if (!fwdMatch && !revMatch) return false;
+
+    if (selectedCarrier && r.carrier !== selectedCarrier.iata) return false;
+    return true;
+  });
+
+  // Add period label
+  rows = rows.map(r => ({ ...r, period: `${MONTH_NAMES[r.month]} ${r.year}` }));
+  rows.sort((a,b) => {
+    const d = (a.year * 12 + a.month) - (b.year * 12 + b.month);
+    return d !== 0 ? d : a.carrier.localeCompare(b.carrier);
+  });
+
+  renderMonthlyTable(rows);
+  renderTrendChart(rows);
+}
+
+// ─── SORT ──────────────────────────────────────────────────────────────────────
+function sortTable(col, thEl) {
+  const tbody = document.getElementById('table-body');
+  const rows  = Array.from(tbody.querySelectorAll('tr'));
+  if (!rows.length) return;
+
+  document.querySelectorAll('th').forEach(t => t.classList.remove('sort-asc','sort-desc'));
+
+  if (sortCol === col) { sortDir *= -1; }
+  else { sortCol = col; sortDir = -1; }
+
+  thEl.classList.add(sortDir === 1 ? 'sort-asc' : 'sort-desc');
+
+  rows.sort((a, b) => {
+    const ai = a.sectionRowIndex, bi = b.sectionRowIndex;
+    const av = getCellVal(a, col), bv = getCellVal(b, col);
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1;
+    if (bv === null) return -1;
+    return (av < bv ? -1 : av > bv ? 1 : 0) * sortDir;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+function getCellVal(row, col) {
+  // Read from data attribute on td if we add it, or parse text
+  const ths = Array.from(document.querySelectorAll('#table-head th'));
+  const idx = ths.findIndex(t => t.id === `th-${col}`);
+  if (idx < 0) return null;
+  const td = row.cells[idx];
+  if (!td) return null;
+  const txt = td.textContent.replace('%','').trim();
+  const num = parseFloat(txt.replace(/[^0-9.-]/g,''));
+  return isNaN(num) ? txt : num;
+}
+
+// ─── UTILS ─────────────────────────────────────────────────────────────────────
+function fmtNum(n) { return n == null ? '—' : n.toLocaleString(); }
+function fmtBig(n) {
+  if (n == null) return '—';
+  if (n >= 1e9) return (n/1e9).toFixed(1) + 'B';
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return n.toLocaleString();
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+function hideError() { document.getElementById('error-banner').classList.remove('visible'); }
+function showInfo(msg) {
+  const el = document.getElementById('info-banner');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+function hideInfo() { document.getElementById('info-banner').classList.remove('visible'); }
+
+// ─── START ─────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
