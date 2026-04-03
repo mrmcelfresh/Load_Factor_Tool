@@ -480,6 +480,11 @@
       <div class="toggle on" id="dir-toggle" onclick="toggleDirection()"></div>
       <label class="toggle-label" onclick="toggleDirection()">Include both directions (O→D and D→O)</label>
     </div>
+    <!-- Bi-directional chart toggle -->
+    <div class="toggle-row">
+      <div class="toggle" id="bidir-toggle" onclick="toggleBidirChart()"></div>
+      <label class="toggle-label" onclick="toggleBidirChart()">Combine directions in chart &amp; table (non-directional routes)</label>
+    </div>
   </div>
 
   <div class="banner error" id="error-banner"></div>
@@ -536,6 +541,7 @@ let selectedOrigin  = null;
 let selectedDest    = null;
 let selectedCarrier = null;
 let bothDirections  = true;
+let bidirChart      = false;
 let currentView     = 'summary';
 let sortCol         = null, sortDir = 1;
 let chartInstance   = null;
@@ -709,6 +715,11 @@ function toggleDirection() {
   document.getElementById('dir-toggle').classList.toggle('on', bothDirections);
 }
 
+function toggleBidirChart() {
+  bidirChart = !bidirChart;
+  document.getElementById('bidir-toggle').classList.toggle('on', bidirChart);
+}
+
 // ─── SEARCH ────────────────────────────────────────────────────────────────────
 function runSearch() {
   hideError(); hideInfo();
@@ -762,11 +773,41 @@ function runSearch() {
   document.getElementById('btn-summary').classList.add('active');
   document.getElementById('btn-monthly').classList.remove('active');
 
-  renderResults(rows, fromVal, toVal);
+  renderResults(rows, fromVal, toVal, bidirChart);
 }
 
 // ─── RENDER ────────────────────────────────────────────────────────────────────
-function renderResults(rows, fromVal, toVal) {
+function collapseToNonDirectional(rows) {
+  // Merge A->B and B->A into a single non-directional route per carrier
+  const map = {};
+  rows.forEach(r => {
+    const routeKey = [r.origin, r.dest].sort().join('-');
+    const key = `${r.carrier}||${routeKey}`;
+    if (!map[key]) {
+      map[key] = {
+        ...r,
+        route: routeKey,
+        origin: null,
+        dest: null,
+        origin_city: null,
+        dest_city: null,
+      };
+    } else {
+      map[key].departures  += r.departures  || 0;
+      map[key].seats       += r.seats       || 0;
+      map[key].passengers  += r.passengers  || 0;
+      map[key].rpms        += r.rpms        || 0;
+      map[key].asms        += r.asms        || 0;
+      if (r.months > map[key].months) map[key].months = r.months;
+    }
+  });
+  return Object.values(map).map(r => ({
+    ...r,
+    load_factor: r.asms > 0 ? r.rpms / r.asms : null
+  }));
+}
+
+function renderResults(rows, fromVal, toVal, bidir) {
   const el = document.getElementById('results');
   el.classList.add('visible');
 
@@ -780,12 +821,23 @@ function renderResults(rows, fromVal, toVal) {
   document.getElementById('results-meta').textContent =
     `${rows.length} route${rows.length !== 1 ? 's' : ''} · ${MONTH_NAMES[fromVal.month]} ${fromVal.year} – ${MONTH_NAMES[toVal.month]} ${toVal.year}`;
 
-  renderSummaryTable(rows);
-  renderChart(rows);
+  const tableRows = bidir ? collapseToNonDirectional(rows) : rows;
+  renderSummaryTable(tableRows, bidir);
+  renderChart(tableRows, bidir);
 }
 
-function renderSummaryTable(rows) {
-  const cols = [
+function renderSummaryTable(rows, bidir) {
+  const cols = bidir ? [
+    { key: 'carrier',      label: 'Carrier' },
+    { key: 'route',        label: 'Non-Directional Route' },
+    { key: 'months',       label: 'Months' },
+    { key: 'departures',   label: 'Departures' },
+    { key: 'passengers',   label: 'Pax' },
+    { key: 'seats',        label: 'Seats' },
+    { key: 'rpms',         label: 'RPMs' },
+    { key: 'asms',         label: 'ASMs' },
+    { key: 'load_factor',  label: 'Load Factor' },
+  ] : [
     { key: 'carrier',      label: 'Carrier' },
     { key: 'origin',       label: 'Origin' },
     { key: 'dest',         label: 'Dest' },
@@ -840,6 +892,8 @@ function renderTableBody(rows, cols) {
       if (c.key === 'rpms' || c.key === 'asms') return `<td>${fmtBig(r[c.key])}</td>`;
       if (c.key === 'departures' || c.key === 'passengers' || c.key === 'seats')
         return `<td>${fmtNum(r[c.key])}</td>`;
+      if (c.key === 'route')
+        return `<td><b>${r.route}</b></td>`;
       if (c.key === 'carrier')
         return `<td><b>${r.carrier}</b> <span style="color:var(--muted);font-size:11px">${r.carrier_name||''}</span></td>`;
       if (c.key === 'origin')
@@ -866,10 +920,12 @@ function lfCell(lf) {
 }
 
 // ─── CHART ─────────────────────────────────────────────────────────────────────
-function renderChart(summaryRows) {
+function renderChart(summaryRows, bidir) {
   // For the chart in summary view, group by carrier and show overall LF as a horizontal bar
   const sorted = [...summaryRows].sort((a,b) => (b.load_factor||0) - (a.load_factor||0)).slice(0, 15);
-  const labels = sorted.map(r => `${r.carrier} ${r.origin}→${r.dest}`);
+  const labels = bidir
+    ? sorted.map(r => `${r.carrier} ${r.route}`)
+    : sorted.map(r => `${r.carrier} ${r.origin}→${r.dest}`);
   const values = sorted.map(r => r.load_factor ? +(r.load_factor * 100).toFixed(2) : 0);
   const colors = values.map(v => v >= 85 ? '#22c55e' : v >= 70 ? '#00d4ff' : '#ff6b35');
 
